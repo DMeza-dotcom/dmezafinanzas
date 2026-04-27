@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>💰 DMezaFinanzas</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet"/>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;}
+    html,body,#root{height:100%;background:#F5F3EE;font-family:'Nunito',sans-serif;}
+    ::-webkit-scrollbar{width:4px;}::-webkit-scrollbar-thumb{background:#D0CEC9;border-radius:4px;}
+    input,select,textarea,button{font-family:'Nunito',sans-serif;}
+    .pill{transition:all .15s;}.pill:hover{filter:brightness(1.06);transform:scale(1.02);}.pill:active{transform:scale(.97);}
+    .nav-active{color:#1A1A2E !important;}
+    input[type=number]::-webkit-inner-spin-button{opacity:0;}
+    input:focus,select:focus{border-color:#1A1A2E !important;background:#fff !important;outline:none;}
+    @keyframes popIn{from{transform:scale(.6);opacity:0;}to{transform:scale(1);opacity:1;}}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const {useState,useEffect,useCallback,useMemo,useRef} = React;
+
+// ── Storage ──────────────────────────────────────────────────────────────────
+const SK = {movs:"fin_movimientos_v3",fijos:"fin_fijos_v2",config:"fin_config_v2",tarjetas:"fin_tarjetas_v1",cuentas:"fin_cuentas_v1",efectivo:"fin_efectivo_v1"};
+const loadLS = (k,d) => { try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch{return d;} };
+const saveLS = (k,v) => { try{localStorage.setItem(k,JSON.stringify(v));}catch{} };
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+const MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+const CATS_GASTO = ["🍔 Comida","🏠 Hogar","🚗 Transporte","💊 Salud","🎭 Ocio","👕 Ropa","📱 Tecnología","📚 Educación","✈️ Viajes","🐾 Mascotas","🎁 Regalos","💸 Otro"];
+const CATS_INGRESO = ["💰 Salario","💼 Freelance","📈 Inversión","🎁 Regalo","💵 Transferencia","💸 Otro"];
+const COLORES = ["#1A1A2E","#0F3460","#16213E","#2D6A4F","#774936","#533483","#C9184A","#023E8A","#6B4226","#1B4332"];
+const defaultCuentas = [{id:"c1",nombre:"BBVA Débito",saldoInicial:5000,color:"#0F3460",emoji:"🏦"}];
+const defaultTarjetas = [{id:"t1",nombre:"BBVA Crédito",limite:15000,saldoInicial:3000,corte:15,pago:10,color:"#C9184A"}];
+// Fijos ahora incluyen cuentaId y tarjetaId para saber con qué se pagan
+const defaultFijos = [
+  {id:"f1",emoji:"📡",nombre:"Netflix",monto:200,activo:true,cuentaId:null,tarjetaId:null},
+  {id:"f2",emoji:"🏋️",nombre:"Gimnasio",monto:500,activo:true,cuentaId:null,tarjetaId:null}
+];
+const defaultConfig = {persona1:"Persona 1",persona2:"Persona 2"};
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const fmt = (n,d=0) => "$"+Number(n||0).toLocaleString("es-MX",{minimumFractionDigits:d,maximumFractionDigits:d});
+const fmtS = (n) => { const a=Math.abs(n); if(a>=1000000) return "$"+(n/1e6).toFixed(1)+"M"; if(a>=1000) return "$"+(n/1000).toFixed(1)+"k"; return fmt(n); };
+const hoy = () => new Date().toISOString().split("T")[0];
+const mesAnio = (f) => { const d=new Date(f+"T00:00:00"); return [d.getMonth(),d.getFullYear()]; };
+const fLabel = (iso) => {
+  const d=new Date(iso+"T00:00:00"),h=new Date(); h.setHours(0,0,0,0);
+  const a=new Date(h); a.setDate(h.getDate()-1);
+  if(d.getTime()===h.getTime()) return "Hoy";
+  if(d.getTime()===a.getTime()) return "Ayer";
+  return d.toLocaleDateString("es-MX",{weekday:"short",day:"numeric",month:"short"});
+};
+
+// ── App ───────────────────────────────────────────────────────────────────────
+function App() {
+  const [tab,setTab] = useState("inicio");
+  const [movs,setMovs] = useState(()=>loadLS(SK.movs,[]));
+  const [fijos,setFijos] = useState(()=>loadLS(SK.fijos,defaultFijos));
+  const [config,setConfig] = useState(()=>loadLS(SK.config,defaultConfig));
+  const [tarjetas,setTarjetas] = useState(()=>loadLS(SK.tarjetas,defaultTarjetas));
+  const [cuentas,setCuentas] = useState(()=>loadLS(SK.cuentas,defaultCuentas));
+  const [efectivo,setEfectivo] = useState(()=>loadLS(SK.efectivo,0));
+  const [mes,setMes] = useState(new Date().getMonth());
+  const [anio,setAnio] = useState(new Date().getFullYear());
+  const [saved,setSaved] = useState(false);
+  const saveTimer = useRef(null);
+
+  useEffect(()=>saveLS(SK.movs,movs),[movs]);
+  useEffect(()=>saveLS(SK.fijos,fijos),[fijos]);
+  useEffect(()=>saveLS(SK.config,config),[config]);
+  useEffect(()=>saveLS(SK.tarjetas,tarjetas),[tarjetas]);
+  useEffect(()=>saveLS(SK.cuentas,cuentas),[cuentas]);
+  useEffect(()=>saveLS(SK.efectivo,efectivo),[efectivo]);
+
+  // Auto-save indicator
+  useEffect(()=>{
+    setSaved(true);
+    if(saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(()=>setSaved(false),1500);
+  },[movs,fijos,config,tarjetas,cuentas,efectivo]);
+
+  const saldoCuenta = useCallback((cid)=>{
+    const c=cuentas.find(x=>x.id===cid); if(!c) return 0;
+    const gas=movs.filter(m=>m.cuentaId===cid&&(m.tipo==="Gasto"||m.tipo==="PagoTarjeta"||m.tipo==="Suscripción"||m.tipo==="Deuda")).reduce((a,m)=>a+m.monto,0);
+    const ing=movs.filter(m=>m.cuentaId===cid&&m.tipo==="Ingreso").reduce((a,m)=>a+m.monto,0);
+    return c.saldoInicial+ing-gas;
+  },[cuentas,movs]);
+
+  const saldoTarjeta = useCallback((tid)=>{
+    const t=tarjetas.find(x=>x.id===tid); if(!t) return {deuda:0,disponible:0};
+    const cargos=movs.filter(m=>m.tarjetaId===tid&&(m.tipo==="Gasto"||m.tipo==="Suscripción"||m.tipo==="Deuda")).reduce((a,m)=>a+m.monto,0);
+    const pagos=movs.filter(m=>m.tarjetaId===tid&&m.tipo==="PagoTarjeta").reduce((a,m)=>a+m.monto,0);
+    const deuda=t.saldoInicial+cargos-pagos;
+    return {deuda:Math.max(0,deuda),disponible:t.limite-Math.max(0,deuda)};
+  },[tarjetas,movs]);
+
+  const efectivoActual = useMemo(()=>{
+    const ing=movs.filter(m=>m.cuentaId==="efectivo"&&m.tipo==="Ingreso").reduce((a,m)=>a+m.monto,0);
+    const gas=movs.filter(m=>m.cuentaId==="efectivo"&&(m.tipo==="Gasto"||m.tipo==="Deuda"||m.tipo==="Suscripción")).reduce((a,m)=>a+m.monto,0);
+    return efectivo+ing-gas;
+  },[efectivo,movs]);
+
+  const addMov = useCallback((m)=>setMovs(prev=>[m,...prev]),[]);
+  const delMov = useCallback((id)=>setMovs(prev=>prev.filter(m=>m.id!==id)),[]);
+
+  const marcarFijo = useCallback((fid,mes,anio)=>{
+    if(movs.some(m=>m.fijoId===fid&&m.mes===mes&&m.anio===anio)) return;
+    const f=fijos.find(x=>x.id===fid); if(!f) return;
+    addMov({
+      id:Date.now().toString(),fijoId:fid,descripcion:f.nombre,monto:f.monto,
+      tipo:"Suscripción",categoria:"📡 Suscripción",
+      cuentaId:f.cuentaId||null,tarjetaId:f.tarjetaId||null,
+      persona:"persona1",fecha:hoy(),mes,anio,nota:"Pago automático fijo"
+    });
+  },[movs,fijos,addMov]);
+
+  const ctx={movs,fijos,config,tarjetas,cuentas,efectivoActual,efectivo,setEfectivo,mes,anio,setMes,setAnio,saldoCuenta,saldoTarjeta,addMov,delMov,marcarFijo,setFijos,setConfig,setTarjetas,setCuentas,setMovs,saved};
+  const TABS={inicio:<Inicio {...ctx}/>,agregar:<Agregar {...ctx} goInicio={()=>setTab("inicio")}/>,cuentas:<CuentasScreen {...ctx}/>,fijos:<FijosScreen {...ctx}/>,ajustes:<AjustesScreen {...ctx}/>};
+
+  return (
+    <div style={S.app}>
+      {/* Save indicator */}
+      {saved && <div style={{position:"fixed",top:8,right:16,zIndex:300,background:"#2D6A4F",color:"#fff",borderRadius:20,padding:"4px 12px",fontSize:11,fontWeight:800,boxShadow:"0 2px 8px rgba(0,0,0,.15)"}}>✓ Guardado</div>}
+      <div style={S.content}>{TABS[tab]}</div>
+      <BottomNav tab={tab} setTab={setTab}/>
+    </div>
+  );
+}
+
+// ── Nav ───────────────────────────────────────────────────────────────────────
+function BottomNav({tab,setTab}) {
+  const items=[["inicio","🏠","Inicio"],["agregar","➕","Agregar"],["cuentas","💳","Cuentas"],["fijos","🔁","Fijos"],["ajustes","⚙️","Ajustes"]];
+  return (
+    <nav style={S.nav}>
+      {items.map(([id,icon,label])=>(
+        <button key={id} onClick={()=>setTab(id)} style={S.navBtn} className={tab===id?"nav-active":""}>
+          <span style={{fontSize:22,lineHeight:1}}>{id==="agregar"?<span style={S.addBtn}>➕</span>:icon}</span>
+          <span style={{fontSize:10,fontWeight:tab===id?800:600,marginTop:1}}>{label}</span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+// ── Inicio ────────────────────────────────────────────────────────────────────
+function Inicio({movs,fijos,tarjetas,cuentas,mes,anio,setMes,setAnio,saldoCuenta,saldoTarjeta,efectivoActual,delMov,marcarFijo}) {
+  const prevMes=()=>mes===0?(setMes(11),setAnio(a=>a-1)):setMes(m=>m-1);
+  const nextMes=()=>mes===11?(setMes(0),setAnio(a=>a+1)):setMes(m=>m+1);
+  const movsDelMes=movs.filter(m=>{const d=new Date(m.fecha+"T00:00:00");return d.getMonth()===mes&&d.getFullYear()===anio;});
+  const totalDeuda=tarjetas.reduce((a,t)=>a+saldoTarjeta(t.id).deuda,0);
+  const totalDisp=cuentas.reduce((a,c)=>a+saldoCuenta(c.id),0)+efectivoActual;
+  const ingresosMes=movsDelMes.filter(m=>m.tipo==="Ingreso").reduce((a,m)=>a+m.monto,0);
+  const gastosMes=movsDelMes.filter(m=>m.tipo!=="Ingreso"&&m.tipo!=="PagoTarjeta").reduce((a,m)=>a+m.monto,0);
+  const pagosMes=movsDelMes.filter(m=>m.tipo==="PagoTarjeta").reduce((a,m)=>a+m.monto,0);
+  const fijosPend=fijos.filter(f=>f.activo&&!movs.some(m=>m.fijoId===f.id&&m.mes===mes&&m.anio===anio));
+  const porFecha=movsDelMes.reduce((acc,m)=>{(acc[m.fecha]=acc[m.fecha]||[]).push(m);return acc;},{});
+  const fechas=Object.keys(porFecha).sort((a,b)=>b.localeCompare(a));
+
+  return (
+    <div style={S.screen}>
+      <div style={{...S.header,paddingLeft:16,paddingRight:16}}>
+        <div><div style={{fontSize:11,color:"#888",fontWeight:700,letterSpacing:1,textTransform:"uppercase"}}>DMeza</div><div style={{fontSize:22,fontWeight:900,color:"#1A1A2E",lineHeight:1}}>Finanzas</div></div>
+        <div style={S.mesNav}><button onClick={prevMes} style={S.mesBtn}>‹</button><span style={{fontSize:13,fontWeight:800,minWidth:120,textAlign:"center"}}>{MESES[mes]} {anio}</span><button onClick={nextMes} style={S.mesBtn}>›</button></div>
+      </div>
+
+      {/* Hero */}
+      <div style={S.heroCard}>
+        <div style={{fontSize:11,opacity:.7,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:4}}>Dinero disponible</div>
+        <div style={{fontSize:42,fontWeight:900,letterSpacing:-2,lineHeight:1}}>{fmtS(totalDisp)}</div>
+        <div style={{fontSize:12,opacity:.6,marginTop:4}}>Deuda total tarjetas: <b>{fmt(totalDeuda)}</b></div>
+        <div style={{display:"flex",gap:16,marginTop:16,paddingTop:16,borderTop:"1px solid rgba(255,255,255,.15)"}}>
+          {[["⬆ Ingresos",ingresosMes,"#52B788"],["⬇ Gastos",gastosMes,"#FF6B6B"],["💳 Pagos TC",pagosMes,"#FFD166"]].map(([l,v,c])=>(
+            <div key={l} style={{flex:1}}><div style={{fontSize:10,opacity:.7}}>{l}</div><div style={{fontSize:16,fontWeight:800,color:c}}>{fmtS(v)}</div></div>
+          ))}
+        </div>
+      </div>
+
+      {/* Cuentas débito */}
+      <ST>🏦 Cuentas de débito</ST>
+      <div style={{display:"flex",gap:10,overflowX:"auto",paddingBottom:8,paddingLeft:16,paddingRight:16,marginBottom:4}}>
+        {cuentas.map(c=>{const s=saldoCuenta(c.id);return(
+          <div key={c.id} style={{...S.miniCard,background:c.color,minWidth:150,flexShrink:0}}>
+            <div style={{fontSize:20,marginBottom:4}}>{c.emoji}</div>
+            <div style={{fontSize:11,opacity:.75,fontWeight:700}}>{c.nombre}</div>
+            <div style={{fontSize:22,fontWeight:900,marginTop:2}}>{fmtS(s)}</div>
+            <div style={{fontSize:10,opacity:.6,marginTop:2}}>Saldo actual</div>
+          </div>
+        );})}
+        <div style={{...S.miniCard,background:"#2D6A4F",minWidth:130,flexShrink:0}}>
+          <div style={{fontSize:20,marginBottom:4}}>💵</div>
+          <div style={{fontSize:11,opacity:.75,fontWeight:700}}>Efectivo</div>
+          <div style={{fontSize:22,fontWeight:900,marginTop:2}}>{fmtS(efectivoActual)}</div>
+          <div style={{fontSize:10,opacity:.6,marginTop:2}}>En mano</div>
+        </div>
+      </div>
+
+      {/* Tarjetas crédito */}
+      <ST>💳 Tarjetas de crédito</ST>
+      <div style={{paddingLeft:16,paddingRight:16,marginBottom:4}}>
+        {tarjetas.map(t=>{
+          const {deuda,disponible}=saldoTarjeta(t.id);
+          const pct=Math.min((deuda/t.limite)*100,100);
+          const barC=pct>80?"#FF6B6B":pct>50?"#FFD166":"#52B788";
+          return(
+            <div key={t.id} style={{...S.card,marginBottom:10}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <div style={{width:10,height:32,borderRadius:4,background:t.color}}/>
+                  <div><div style={{fontWeight:800,fontSize:14}}>{t.nombre}</div><div style={{fontSize:11,color:"#999"}}>Corte {t.corte} · Pago {t.pago}</div></div>
+                </div>
+                <div style={{textAlign:"right"}}><div style={{fontSize:11,color:"#999"}}>Disponible</div><div style={{fontSize:16,fontWeight:900,color:"#2D6A4F"}}>{fmt(disponible)}</div></div>
+              </div>
+              <div style={{height:8,background:"#F0EEE9",borderRadius:10,marginBottom:6}}><div style={{width:`${pct}%`,height:"100%",background:barC,borderRadius:10,transition:"width .5s"}}/></div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:12}}>
+                <span style={{color:"#C9184A",fontWeight:700}}>Deuda: {fmt(deuda)}</span>
+                <span style={{color:"#999"}}>Límite: {fmt(t.limite)}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Fijos pendientes */}
+      {fijosPend.length>0&&(<>
+        <ST>🔁 Fijos pendientes este mes</ST>
+        <div style={{paddingLeft:16,paddingRight:16,marginBottom:4}}>
+          <div style={S.card}>
+            {fijosPend.map((f,i)=>{
+              const tc=f.tarjetaId?{id:f.tarjetaId,nombre:(defaultTarjetas.find(t=>t.id===f.tarjetaId)||{}).nombre||"Tarjeta"}:null;
+              return(
+                <div key={f.id} style={{...S.fijoRow,borderBottom:i===fijosPend.length-1?"none":"1px solid #F5F3EE"}}>
+                  <span style={{fontSize:20}}>{f.emoji}</span>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:700,fontSize:13}}>{f.nombre}</div>
+                    <div style={{fontSize:11,color:"#AAA"}}>{fmt(f.monto)}/mes {f.tarjetaId?"· 💳 TC":"· 🏦 Débito"}</div>
+                  </div>
+                  <button onClick={()=>marcarFijo(f.id,mes,anio)} className="pill" style={S.pagarBtn}>✓ Pagado</button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </>)}
+
+      {/* Movimientos */}
+      <ST>📋 Movimientos del mes</ST>
+      <div style={{paddingLeft:16,paddingRight:16,marginBottom:90}}>
+        {fechas.length===0&&<div style={{...S.card,textAlign:"center",color:"#BBB",padding:32,fontSize:13}}>Sin movimientos este mes</div>}
+        {fechas.map(f=>(
+          <div key={f} style={{marginBottom:4}}>
+            <div style={S.fechaTag}>{fLabel(f)}</div>
+            <div style={S.card}>{porFecha[f].map((m,i)=><MovRow key={m.id} m={m} tarjetas={tarjetas} cuentas={cuentas} onDel={()=>delMov(m.id)} last={i===porFecha[f].length-1}/>)}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MovRow({m,tarjetas,cuentas,onDel,last}) {
+  const [showDel,setShowDel]=useState(false);
+  const cuenta=cuentas.find(c=>c.id===m.cuentaId);
+  const tarjeta=tarjetas.find(t=>t.id===m.tarjetaId);
+  const tipoC={Gasto:"#E63946",Ingreso:"#2D6A4F",Deuda:"#774936","Suscripción":"#533483",PagoTarjeta:"#0F3460"};
+  const c=tipoC[m.tipo]||"#666";
+  return(
+    <div style={{...S.movRow,borderBottom:last?"none":"1px solid #F5F3EE",position:"relative"}} onClick={()=>setShowDel(s=>!s)}>
+      <div style={{width:38,height:38,borderRadius:12,background:c+"18",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{m.categoria?.split(" ")[0]||"💸"}</div>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontWeight:700,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.descripcion||m.categoria}</div>
+        <div style={{fontSize:11,color:"#AAA",marginTop:2,display:"flex",gap:4,flexWrap:"wrap"}}>
+          {tarjeta&&<span style={{background:tarjeta.color+"22",color:tarjeta.color,borderRadius:6,padding:"1px 6px",fontWeight:700}}>💳 {tarjeta.nombre}</span>}
+          {cuenta&&<span style={{background:cuenta.color+"22",color:cuenta.color,borderRadius:6,padding:"1px 6px",fontWeight:700}}>{cuenta.emoji} {cuenta.nombre}</span>}
+          {m.cuentaId==="efectivo"&&<span style={{background:"#2D6A4F22",color:"#2D6A4F",borderRadius:6,padding:"1px 6px",fontWeight:700}}>💵 Efectivo</span>}
+          {m.nota&&<span style={{color:"#CCC"}}>· {m.nota}</span>}
+        </div>
+      </div>
+      <div style={{textAlign:"right",flexShrink:0}}>
+        <div style={{fontWeight:900,fontSize:15,color:c}}>{m.tipo==="Ingreso"?"+":"-"}{fmtS(m.monto)}</div>
+        <div style={{fontSize:10,color:"#CCC"}}>{m.tipo==="PagoTarjeta"?"Pago TC":m.tipo}</div>
+      </div>
+      {showDel&&<button onClick={e=>{e.stopPropagation();onDel();}} style={{position:"absolute",right:0,top:0,bottom:0,background:"#E63946",border:"none",color:"#fff",fontWeight:800,fontSize:12,padding:"0 14px",borderTopRightRadius:8,borderBottomRightRadius:8,cursor:"pointer"}}>🗑️ Borrar</button>}
+    </div>
+  );
+}
+
+// ── Agregar ───────────────────────────────────────────────────────────────────
+function Agregar({tarjetas,cuentas,config,addMov,goInicio}) {
+  const TIPOS=["Gasto","Ingreso","PagoTarjeta","Suscripción","Deuda"];
+  const TLABELS={Gasto:"💸 Gasto",Ingreso:"💰 Ingreso",PagoTarjeta:"💳 Pago TC",Suscripción:"📡 Suscripción",Deuda:"🏦 Deuda"};
+  const TDESC={Gasto:"Sale de cuenta/TC",Ingreso:"Entra a una cuenta",PagoTarjeta:"Abonas a tu tarjeta",Suscripción:"Cargo fijo mensual (Netflix, Spotify…)",Deuda:"Registro de deuda"};
+  const cOpts=[...cuentas.map(c=>({id:c.id,label:`${c.emoji} ${c.nombre}`,color:c.color})),{id:"efectivo",label:"💵 Efectivo",color:"#2D6A4F"}];
+  const tOpts=tarjetas.map(t=>({id:t.id,label:`💳 ${t.nombre}`,color:t.color}));
+
+  const [tipo,setTipo]=useState("Gasto");
+  const [monto,setMonto]=useState("");
+  const [origen,setOrigen]=useState(cOpts[0]?.id||"");
+  const [cuentaPago,setCuentaPago]=useState(cOpts[0]?.id||"");
+  const [tarjetaPago,setTarjetaPago]=useState(tarjetas[0]?.id||"");
+  const [destino,setDestino]=useState(cOpts[0]?.id||"");
+  const [categoria,setCategoria]=useState(CATS_GASTO[0]);
+  const [descripcion,setDescripcion]=useState("");
+  const [fecha,setFecha]=useState(hoy());
+  const [persona,setPersona]=useState("persona1");
+  const [nota,setNota]=useState("");
+  const [ok,setOk]=useState(false);
+  const [err,setErr]=useState("");
+
+  useEffect(()=>{setErr("");setCategoria(tipo==="Ingreso"?CATS_INGRESO[0]:CATS_GASTO[0]);},[tipo]);
+
+  const save=()=>{
+    if(!monto||isNaN(+monto)||+monto<=0){setErr("Ingresa un monto válido");return;}
+    const [m,a]=mesAnio(fecha);
+    let mov={id:Date.now().toString(),tipo,monto:+monto,categoria,descripcion,fecha,mes:m,anio:a,persona,nota,cuentaId:null,tarjetaId:null};
+    if(tipo==="Gasto"||tipo==="Suscripción"||tipo==="Deuda"){
+      const esTC=tOpts.find(t=>t.id===origen);
+      if(esTC){mov.tarjetaId=origen;}else{mov.cuentaId=origen;}
+    }else if(tipo==="Ingreso"){
+      mov.cuentaId=destino;
+    }else if(tipo==="PagoTarjeta"){
+      if(!tarjetaPago){setErr("Selecciona la tarjeta");return;}
+      mov.cuentaId=cuentaPago; mov.tarjetaId=tarjetaPago;
+    }
+    addMov(mov);setOk(true);setTimeout(()=>{setOk(false);goInicio();},900);
+  };
+
+  if(ok) return(<div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"80vh",gap:12}}><div style={{fontSize:64}}>✅</div><div style={{fontSize:22,fontWeight:900,color:"#2D6A4F"}}>¡Guardado!</div></div>);
+
+  const OBtn=({o,sel,onClick})=>(<button onClick={onClick} className="pill" style={{padding:"8px 14px",borderRadius:20,border:`2px solid ${sel?o.color:"#E8E8E8"}`,background:sel?o.color+"22":"#fff",fontSize:13,fontWeight:700,color:sel?o.color:"#555",cursor:"pointer"}}>{o.label}</button>);
+
+  return(
+    <div style={S.screen}>
+      <div style={{...S.header,paddingLeft:16,paddingRight:16}}><div style={{fontSize:20,fontWeight:900,color:"#1A1A2E"}}>➕ Nuevo movimiento</div></div>
+      <div style={{paddingLeft:16,paddingRight:16,paddingBottom:90}}>
+        <Fg><Lbl>Tipo</Lbl>
+          <div style={{display:"flex",flexWrap:"wrap",gap:8}}>{TIPOS.map(t=><button key={t} onClick={()=>setTipo(t)} className="pill" style={{...S.chip,...(tipo===t?S.chipOn:{})}}>{TLABELS[t]}</button>)}</div>
+          <div style={{fontSize:11,color:"#999",marginTop:6}}>{TDESC[tipo]}</div>
+        </Fg>
+        <Fg><Lbl>Monto</Lbl>
+          <div style={{position:"relative"}}><span style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",fontWeight:900,fontSize:18}}>$</span>
+          <input style={{...S.input,paddingLeft:28,fontSize:22,fontWeight:900}} type="number" placeholder="0" value={monto} onChange={e=>{setMonto(e.target.value);setErr("");}}/>
+          </div>
+        </Fg>
+
+        {/* Origen para Gasto/Suscripción/Deuda */}
+        {(tipo==="Gasto"||tipo==="Suscripción"||tipo==="Deuda")&&(
+          <Fg><Lbl>¿Con qué pagas?</Lbl>
+            <div style={{fontSize:11,color:"#888",fontWeight:700,marginBottom:6}}>— Débito / Efectivo —</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:10}}>{cOpts.map(o=><OBtn key={o.id} o={o} sel={origen===o.id} onClick={()=>setOrigen(o.id)}/>)}</div>
+            {tOpts.length>0&&<><div style={{fontSize:11,color:"#888",fontWeight:700,marginBottom:6}}>— Tarjetas de crédito —</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8}}>{tOpts.map(o=><OBtn key={o.id} o={o} sel={origen===o.id} onClick={()=>setOrigen(o.id)}/>)}</div></>}
+          </Fg>
+        )}
+
+        {/* Pago tarjeta */}
+        {tipo==="PagoTarjeta"&&(<>
+          <Fg><Lbl>¿De dónde sale?</Lbl><div style={{display:"flex",flexWrap:"wrap",gap:8}}>{cOpts.map(o=><OBtn key={o.id} o={o} sel={cuentaPago===o.id} onClick={()=>setCuentaPago(o.id)}/>)}</div></Fg>
+          <Fg><Lbl>¿A qué tarjeta abonas?</Lbl><div style={{display:"flex",flexWrap:"wrap",gap:8}}>{tOpts.map(o=><OBtn key={o.id} o={o} sel={tarjetaPago===o.id} onClick={()=>setTarjetaPago(o.id)}/>)}</div></Fg>
+        </>)}
+
+        {/* Ingreso destino */}
+        {tipo==="Ingreso"&&(<Fg><Lbl>¿A qué cuenta entra?</Lbl><div style={{display:"flex",flexWrap:"wrap",gap:8}}>{cOpts.map(o=><OBtn key={o.id} o={o} sel={destino===o.id} onClick={()=>setDestino(o.id)}/>)}</div></Fg>)}
+
+        {/* Categoría */}
+        {tipo!=="PagoTarjeta"&&(<Fg><Lbl>Categoría</Lbl>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{(tipo==="Ingreso"?CATS_INGRESO:CATS_GASTO).map(c=><button key={c} onClick={()=>setCategoria(c)} className="pill" style={{...S.chip,...(categoria===c?S.chipOn:{}),padding:"6px 10px",fontSize:12}}>{c}</button>)}</div>
+        </Fg>)}
+
+        {tipo==="Ingreso"&&(<Fg><Lbl>Persona</Lbl><div style={{display:"flex",gap:8}}>{[["persona1",config.persona1],["persona2",config.persona2]].map(([v,l])=><button key={v} onClick={()=>setPersona(v)} className="pill" style={{...S.chip,...(persona===v?S.chipOn:{})}}>{l}</button>)}</div></Fg>)}
+
+        <Fg><Lbl>Descripción</Lbl><input style={S.input} placeholder="Ej: Súper del domingo" value={descripcion} onChange={e=>setDescripcion(e.target.value)}/></Fg>
+        <Fg><Lbl>Fecha</Lbl><input style={S.input} type="date" value={fecha} onChange={e=>setFecha(e.target.value)}/></Fg>
+        <Fg><Lbl>Nota (opcional)</Lbl><input style={S.input} placeholder="Ej: Pago mínimo" value={nota} onChange={e=>setNota(e.target.value)}/></Fg>
+        {err&&<div style={{background:"#FFE0E0",borderRadius:12,padding:"10px 14px",color:"#C9184A",fontWeight:700,fontSize:13,marginBottom:12}}>{err}</div>}
+        <button onClick={save} className="pill" style={S.saveBtn}>💾 Guardar movimiento</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Cuentas ───────────────────────────────────────────────────────────────────
+function CuentasScreen({cuentas,setCuentas,tarjetas,setTarjetas,movs,saldoCuenta,saldoTarjeta,efectivoActual,efectivo,setEfectivo}) {
+  const [vista,setVista]=useState("lista");
+  const [form,setForm]=useState({});
+  const [editEfectivo,setEditEfectivo]=useState(false);
+  const [efTemp,setEfTemp]=useState("");
+  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+
+  const saveCuenta=()=>{
+    if(!form.nombre||form.saldoInicial==="") return;
+    const item={...form,saldoInicial:+form.saldoInicial,_nuevo:undefined};
+    setCuentas(prev=>form._nuevo?[...prev,{...item,id:Date.now().toString()}]:prev.map(c=>c.id===item.id?item:c));
+    setVista("lista");
+  };
+  const saveTarjeta=()=>{
+    if(!form.nombre||!form.limite) return;
+    const item={...form,limite:+form.limite,saldoInicial:+form.saldoInicial||0,corte:+form.corte||1,pago:+form.pago||1,_nuevo:undefined};
+    setTarjetas(prev=>form._nuevo?[...prev,{...item,id:Date.now().toString()}]:prev.map(t=>t.id===item.id?item:t));
+    setVista("lista");
+  };
+  const delCuenta=id=>{if(window.confirm("¿Eliminar cuenta?"))setCuentas(p=>p.filter(c=>c.id!==id));};
+  const delTarjeta=id=>{if(window.confirm("¿Eliminar tarjeta?"))setTarjetas(p=>p.filter(t=>t.id!==id));};
+
+  if(vista==="editCuenta"||vista==="nuevaCuenta") return(
+    <div style={S.screen}><FH title={vista==="nuevaCuenta"?"Nueva cuenta":"Editar cuenta"} onBack={()=>setVista("lista")}/>
+    <div style={{paddingLeft:16,paddingRight:16,paddingBottom:90}}>
+      <Lbl>Emoji</Lbl><input style={S.input} value={form.emoji||""} onChange={e=>set("emoji",e.target.value)} maxLength={2}/>
+      <Lbl>Nombre</Lbl><input style={S.input} value={form.nombre||""} onChange={e=>set("nombre",e.target.value)} placeholder="Ej: BBVA Débito"/>
+      <Lbl>Saldo inicial ($)</Lbl><input style={S.input} type="number" value={form.saldoInicial??""} onChange={e=>set("saldoInicial",e.target.value)}/>
+      <Lbl>Color</Lbl><div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}}>{COLORES.map(c=><button key={c} onClick={()=>set("color",c)} style={{width:34,height:34,borderRadius:8,background:c,border:form.color===c?"3px solid #1A1A2E":"2px solid transparent",cursor:"pointer"}}/>)}</div>
+      <button className="pill" onClick={saveCuenta} style={S.saveBtn}>Guardar</button>
+    </div></div>
+  );
+
+  if(vista==="editTarjeta"||vista==="nuevaTarjeta") return(
+    <div style={S.screen}><FH title={vista==="nuevaTarjeta"?"Nueva tarjeta":"Editar tarjeta"} onBack={()=>setVista("lista")}/>
+    <div style={{paddingLeft:16,paddingRight:16,paddingBottom:90}}>
+      <Lbl>Nombre</Lbl><input style={S.input} value={form.nombre||""} onChange={e=>set("nombre",e.target.value)} placeholder="Ej: BBVA Azul"/>
+      <Lbl>Límite de crédito ($)</Lbl><input style={S.input} type="number" value={form.limite||""} onChange={e=>set("limite",e.target.value)}/>
+      <Lbl>Deuda actual ($)</Lbl><input style={S.input} type="number" value={form.saldoInicial??""} onChange={e=>set("saldoInicial",e.target.value)} placeholder="0"/>
+      <Lbl>Día de corte</Lbl><input style={S.input} type="number" min="1" max="31" value={form.corte||""} onChange={e=>set("corte",e.target.value)}/>
+      <Lbl>Día de pago</Lbl><input style={S.input} type="number" min="1" max="31" value={form.pago||""} onChange={e=>set("pago",e.target.value)}/>
+      <Lbl>Color</Lbl><div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}}>{COLORES.map(c=><button key={c} onClick={()=>set("color",c)} style={{width:34,height:34,borderRadius:8,background:c,border:form.color===c?"3px solid #1A1A2E":"2px solid transparent",cursor:"pointer"}}/>)}</div>
+      <button className="pill" onClick={saveTarjeta} style={S.saveBtn}>Guardar</button>
+    </div></div>
+  );
+
+  return(
+    <div style={S.screen}>
+      <div style={{...S.header,paddingLeft:16,paddingRight:16}}><div style={{fontSize:20,fontWeight:900,color:"#1A1A2E"}}>💳 Cuentas</div></div>
+      <div style={{paddingLeft:16,paddingRight:16,paddingBottom:90}}>
+        {/* Débito */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}><SLbl>🏦 Débito</SLbl><button className="pill" onClick={()=>{setForm({emoji:"🏦",color:COLORES[0],saldoInicial:"",_nuevo:true});setVista("nuevaCuenta");}} style={S.addSmBtn}>+ Agregar</button></div>
+        {cuentas.map(c=>{const s=saldoCuenta(c.id);return(
+          <div key={c.id} style={{...S.card,marginBottom:10,borderLeft:`4px solid ${c.color}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{display:"flex",alignItems:"center",gap:10}}><span style={{fontSize:24}}>{c.emoji}</span><div><div style={{fontWeight:800,fontSize:15}}>{c.nombre}</div><div style={{fontSize:11,color:"#999"}}>Inicial: {fmt(c.saldoInicial)}</div></div></div>
+              <div style={{textAlign:"right"}}>
+                <div style={{fontSize:20,fontWeight:900,color:s>=0?"#2D6A4F":"#C9184A"}}>{fmtS(s)}</div>
+                <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:4}}>
+                  <button onClick={()=>{setForm(c);setVista("editCuenta");}} style={S.editBtn}>✏️ Editar</button>
+                  <button onClick={()=>delCuenta(c.id)} style={S.delBtn}>🗑️</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );})}
+
+        {/* Efectivo */}
+        <div style={{...S.card,marginBottom:16,borderLeft:"4px solid #2D6A4F"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}><span style={{fontSize:24}}>💵</span><div><div style={{fontWeight:800,fontSize:15}}>Efectivo</div><div style={{fontSize:11,color:"#999"}}>Inicial: {fmt(efectivo)}</div></div></div>
+            <div style={{textAlign:"right"}}><div style={{fontSize:20,fontWeight:900,color:"#2D6A4F"}}>{fmtS(efectivoActual)}</div><button onClick={()=>{setEfTemp(String(efectivo));setEditEfectivo(true);}} style={S.editBtn}>✏️ Editar</button></div>
+          </div>
+          {editEfectivo&&(<div style={{marginTop:12,paddingTop:12,borderTop:"1px solid #F0EEE9"}}>
+            <Lbl>Nuevo saldo inicial ($)</Lbl>
+            <input style={{...S.input,marginBottom:8}} type="number" autoFocus value={efTemp} onChange={e=>setEfTemp(e.target.value)}/>
+            <div style={{display:"flex",gap:8}}>
+              <button className="pill" onClick={()=>{if(!isNaN(+efTemp)&&efTemp!==""){setEfectivo(+efTemp);setEditEfectivo(false);}}} style={{...S.saveBtn,padding:"10px 0",fontSize:13}}>✓ Guardar</button>
+              <button className="pill" onClick={()=>setEditEfectivo(false)} style={{...S.saveBtn,background:"#F0EEE9",color:"#1A1A2E",padding:"10px 0",fontSize:13}}>Cancelar</button>
+            </div>
+          </div>)}
+        </div>
+
+        {/* Tarjetas */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}><SLbl>💳 Crédito</SLbl><button className="pill" onClick={()=>{setForm({color:COLORES[0],saldoInicial:"",_nuevo:true});setVista("nuevaTarjeta");}} style={S.addSmBtn}>+ Agregar</button></div>
+        {tarjetas.map(t=>{
+          const {deuda,disponible}=saldoTarjeta(t.id);
+          const pct=Math.min((deuda/t.limite)*100,100);
+          const barC=pct>80?"#FF6B6B":pct>50?"#FFD166":"#52B788";
+          return(
+            <div key={t.id} style={{...S.card,marginBottom:10,borderLeft:`4px solid ${t.color}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+                <div><div style={{fontWeight:800,fontSize:15}}>{t.nombre}</div><div style={{fontSize:11,color:"#999"}}>Corte {t.corte} · Pago {t.pago}</div></div>
+                <div style={{display:"flex",gap:8}}><button onClick={()=>{setForm(t);setVista("editTarjeta");}} style={S.editBtn}>✏️ Editar</button><button onClick={()=>delTarjeta(t.id)} style={S.delBtn}>🗑️</button></div>
+              </div>
+              <div style={{height:8,background:"#F0EEE9",borderRadius:10,marginBottom:8}}><div style={{width:`${pct}%`,height:"100%",background:barC,borderRadius:10,transition:"width .5s"}}/></div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:13}}>
+                <div><span style={{color:"#999",fontSize:11}}>Deuda</span><br/><b style={{color:"#C9184A"}}>{fmt(deuda)}</b></div>
+                <div style={{textAlign:"center"}}><span style={{color:"#999",fontSize:11}}>Disponible</span><br/><b style={{color:"#2D6A4F"}}>{fmt(disponible)}</b></div>
+                <div style={{textAlign:"right"}}><span style={{color:"#999",fontSize:11}}>Límite</span><br/><b>{fmt(t.limite)}</b></div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Fijos ─────────────────────────────────────────────────────────────────────
+function FijosScreen({fijos,setFijos,cuentas,tarjetas}) {
+  const [editando,setEditando]=useState(null);
+  const [form,setForm]=useState({});
+  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+  const toggle=id=>setFijos(prev=>prev.map(f=>f.id===id?{...f,activo:!f.activo}:f));
+  const del=id=>{if(window.confirm("¿Eliminar?"))setFijos(prev=>prev.filter(f=>f.id!==id));};
+  const save=()=>{
+    if(!form.nombre||!form.monto) return;
+    const item={...form,monto:+form.monto};
+    setFijos(prev=>editando==="nuevo"?[...prev,{...item,id:Date.now().toString()}]:prev.map(f=>f.id===item.id?item:f));
+    setEditando(null);
+  };
+
+  const cOpts=[...cuentas.map(c=>({id:c.id,label:`${c.emoji} ${c.nombre}`,color:c.color})),{id:"efectivo",label:"💵 Efectivo",color:"#2D6A4F"}];
+  const tOpts=tarjetas.map(t=>({id:t.id,label:`💳 ${t.nombre}`,color:t.color}));
+  const OBtn=({o,sel,onClick})=>(<button onClick={onClick} className="pill" style={{padding:"7px 12px",borderRadius:20,border:`2px solid ${sel?o.color:"#E8E8E8"}`,background:sel?o.color+"22":"#fff",fontSize:12,fontWeight:700,color:sel?o.color:"#555",cursor:"pointer"}}>{o.label}</button>);
+
+  if(editando) return(
+    <div style={S.screen}><FH title={editando==="nuevo"?"Nuevo gasto fijo":"Editar fijo"} onBack={()=>setEditando(null)}/>
+    <div style={{paddingLeft:16,paddingRight:16,paddingBottom:90}}>
+      <Lbl>Emoji</Lbl><input style={S.input} value={form.emoji||""} onChange={e=>set("emoji",e.target.value)} maxLength={2} placeholder="📌"/>
+      <Lbl>Nombre</Lbl><input style={S.input} value={form.nombre||""} onChange={e=>set("nombre",e.target.value)} placeholder="Ej: Netflix"/>
+      <Lbl>Monto mensual ($)</Lbl><input style={S.input} type="number" value={form.monto||""} onChange={e=>set("monto",e.target.value)}/>
+
+      {/* NUEVO: método de pago del fijo */}
+      <Lbl>¿Con qué se paga?</Lbl>
+      <div style={{background:"#F8F6F1",borderRadius:14,padding:"12px 14px",marginBottom:16}}>
+        <div style={{fontSize:11,color:"#888",fontWeight:700,marginBottom:8}}>— Débito / Efectivo —</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:10}}>
+          {cOpts.map(o=><OBtn key={o.id} o={o} sel={form.cuentaId===o.id&&!form.tarjetaId} onClick={()=>set("cuentaId",o.id)||set("tarjetaId",null)}/>)}
+          <OBtn o={{id:"_sin",label:"Sin asignar",color:"#BBB"}} sel={!form.cuentaId&&!form.tarjetaId} onClick={()=>{set("cuentaId",null);set("tarjetaId",null);}}/>
+        </div>
+        {tOpts.length>0&&<>
+          <div style={{fontSize:11,color:"#888",fontWeight:700,marginBottom:8}}>— Tarjetas de crédito —</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:8}}>{tOpts.map(o=><OBtn key={o.id} o={o} sel={form.tarjetaId===o.id} onClick={()=>{set("tarjetaId",o.id);set("cuentaId",null);}}/>)}</div>
+        </>}
+      </div>
+
+      <button className="pill" onClick={save} style={S.saveBtn}>Guardar</button>
+    </div></div>
+  );
+
+  const totalActivos=fijos.filter(f=>f.activo).reduce((a,f)=>a+f.monto,0);
+
+  return(
+    <div style={S.screen}>
+      <div style={{...S.header,paddingLeft:16,paddingRight:16}}><div style={{fontSize:20,fontWeight:900,color:"#1A1A2E"}}>🔁 Gastos Fijos</div><button className="pill" onClick={()=>{setForm({emoji:"📌",activo:true,cuentaId:null,tarjetaId:null});setEditando("nuevo");}} style={S.addSmBtn}>+ Nuevo</button></div>
+      <div style={{paddingLeft:16,paddingRight:16,paddingBottom:90}}>
+        {fijos.length===0&&<div style={{...S.card,textAlign:"center",color:"#BBB",padding:32}}>Sin gastos fijos registrados</div>}
+        <div style={S.card}>
+          {fijos.map((f,i)=>{
+            const tc=tarjetas.find(t=>t.id===f.tarjetaId);
+            const cu=cuentas.find(c=>c.id===f.cuentaId);
+            const esEfectivo=f.cuentaId==="efectivo";
+            return(
+              <div key={f.id} style={{...S.fijoRow,borderBottom:i===fijos.length-1?"none":"1px solid #F5F3EE"}}>
+                <span style={{fontSize:22}}>{f.emoji}</span>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:700,fontSize:14,color:f.activo?"#1A1A2E":"#BBB"}}>{f.nombre}</div>
+                  <div style={{fontSize:11,marginTop:2,display:"flex",gap:4,flexWrap:"wrap"}}>
+                    <span style={{color:"#AAA"}}>{fmt(f.monto)}/mes</span>
+                    {tc&&<span style={{background:tc.color+"22",color:tc.color,borderRadius:6,padding:"1px 7px",fontWeight:700}}>💳 {tc.nombre}</span>}
+                    {cu&&<span style={{background:cu.color+"22",color:cu.color,borderRadius:6,padding:"1px 7px",fontWeight:700}}>{cu.emoji} {cu.nombre}</span>}
+                    {esEfectivo&&<span style={{background:"#2D6A4F22",color:"#2D6A4F",borderRadius:6,padding:"1px 7px",fontWeight:700}}>💵 Efectivo</span>}
+                    {!tc&&!cu&&!esEfectivo&&<span style={{color:"#DDD",fontSize:10}}>Sin método asignado</span>}
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                  <button onClick={()=>{setForm(f);setEditando(f.id);}} style={{background:"none",border:"none",fontSize:15,cursor:"pointer"}}>✏️</button>
+                  <button onClick={()=>del(f.id)} style={{background:"none",border:"none",fontSize:15,cursor:"pointer"}}>🗑️</button>
+                  <Switch on={f.activo} onChange={()=>toggle(f.id)}/>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{...S.card,marginTop:12,background:"#F0EEE9"}}>
+          <div style={{fontSize:12,color:"#888",fontWeight:700}}>Total fijos activos / mes</div>
+          <div style={{fontSize:26,fontWeight:900,color:"#1A1A2E",marginTop:2}}>{fmt(totalActivos)}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Ajustes ───────────────────────────────────────────────────────────────────
+function AjustesScreen({config,setConfig,movs,setMovs,fijos,setFijos,tarjetas,setTarjetas,cuentas,setCuentas,efectivo,setEfectivo}) {
+  const [msg,setMsg]=useState("");
+  const show=m=>{setMsg(m);setTimeout(()=>setMsg(""),2500);};
+  const exportar=()=>{
+    const data=JSON.stringify({movs,fijos,tarjetas,cuentas,config,efectivo,_ts:new Date().toISOString()},null,2);
+    const blob=new Blob([data],{type:"application/json"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");a.href=url;a.download=`DMezaFinanzas_${new Date().toISOString().split("T")[0]}.json`;a.click();
+    URL.revokeObjectURL(url);show("✅ Exportado");
+  };
+  const importar=e=>{
+    const f=e.target.files[0];if(!f)return;
+    const r=new FileReader();
+    r.onload=ev=>{try{const d=JSON.parse(ev.target.result);if(d.movs)setMovs(d.movs);if(d.fijos)setFijos(d.fijos);if(d.tarjetas)setTarjetas(d.tarjetas);if(d.cuentas)setCuentas(d.cuentas);if(d.config)setConfig(d.config);if(d.efectivo!==undefined)setEfectivo(d.efectivo);show("✅ Importado correctamente");}catch{show("❌ Error al importar");}};
+    r.readAsText(f);
+    e.target.value="";
+  };
+  return(
+    <div style={S.screen}>
+      <div style={{...S.header,paddingLeft:16,paddingRight:16}}><div style={{fontSize:20,fontWeight:900,color:"#1A1A2E"}}>⚙️ Ajustes</div></div>
+      <div style={{paddingLeft:16,paddingRight:16,paddingBottom:90}}>
+        {msg&&<div style={{background:"#1A1A2E",color:"#fff",borderRadius:12,padding:"12px 16px",marginBottom:12,fontWeight:700,textAlign:"center"}}>{msg}</div>}
+        <div style={S.card}>
+          <div style={S.cardTitle}>👥 Nombres</div>
+          <Lbl>Persona 1</Lbl><input style={S.input} value={config.persona1} onChange={e=>setConfig(c=>({...c,persona1:e.target.value}))}/>
+          <Lbl>Persona 2</Lbl><input style={S.input} value={config.persona2} onChange={e=>setConfig(c=>({...c,persona2:e.target.value}))}/>
+        </div>
+        <div style={S.card}>
+          <div style={S.cardTitle}>📂 Respaldo de datos</div>
+          <div style={{background:"#F0F8F4",borderRadius:12,padding:"10px 14px",marginBottom:12,fontSize:12,color:"#2D6A4F",fontWeight:700}}>💡 Exporta el JSON para transferir datos entre dispositivos o como respaldo</div>
+          <button className="pill" onClick={exportar} style={{...S.saveBtn,marginBottom:10}}>⬇ Exportar JSON</button>
+          <label style={{...S.saveBtn,display:"block",textAlign:"center",cursor:"pointer",background:"#533483",fontFamily:"'Nunito',sans-serif",fontWeight:800,fontSize:15,padding:14,borderRadius:14,marginBottom:10}}>⬆ Importar JSON<input type="file" accept=".json" onChange={importar} style={{display:"none"}}/></label>
+          <button className="pill" onClick={()=>{if(window.confirm("¿Borrar TODOS los movimientos? Esta acción no se puede deshacer."))setMovs([]);}} style={{...S.saveBtn,background:"#C9184A"}}>🗑️ Borrar todos los movimientos</button>
+        </div>
+        <div style={{...S.card,textAlign:"center",color:"#BBB",fontSize:12}}>
+          <div style={{fontWeight:900,color:"#1A1A2E",fontSize:15,marginBottom:4}}>DMezaFinanzas v3.0</div>
+          Datos guardados en este navegador<br/>
+          <span style={{fontSize:10}}>Toca cualquier movimiento para eliminarlo · Exporta el JSON para pasar datos a otro dispositivo</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Shared ────────────────────────────────────────────────────────────────────
+function Switch({on,onChange}){return<div onClick={onChange} style={{width:44,height:24,borderRadius:12,background:on?"#2D6A4F":"#DDD",position:"relative",cursor:"pointer",transition:"background .2s",flexShrink:0}}><div style={{position:"absolute",top:2,left:on?22:2,width:20,height:20,borderRadius:10,background:"#fff",transition:"left .2s",boxShadow:"0 1px 4px rgba(0,0,0,.2)"}}/></div>;}
+const Lbl=({children})=><div style={{fontSize:12,fontWeight:800,color:"#555",marginBottom:6,marginTop:4,textTransform:"uppercase",letterSpacing:.5}}>{children}</div>;
+const SLbl=({children})=><div style={{fontSize:12,fontWeight:800,color:"#888",textTransform:"uppercase",letterSpacing:.5}}>{children}</div>;
+const ST=({children})=><div style={{fontSize:12,fontWeight:800,color:"#888",textTransform:"uppercase",letterSpacing:.5,padding:"10px 16px 6px"}}>{children}</div>;
+const Fg=({children})=><div style={{marginBottom:16}}>{children}</div>;
+function FH({title,onBack}){return<div style={{...S.header,paddingLeft:16,paddingRight:16}}><button onClick={onBack} style={{background:"#F0EEE9",border:"none",borderRadius:10,padding:"8px 14px",fontWeight:800,fontSize:13,cursor:"pointer",color:"#1A1A2E"}}>‹ Volver</button><div style={{fontWeight:900,fontSize:16,color:"#1A1A2E"}}>{title}</div><div style={{width:70}}/></div>;}
+
+// ── Styles ────────────────────────────────────────────────────────────────────
+const S={
+  app:{maxWidth:480,margin:"0 auto",minHeight:"100vh",background:"#F5F3EE",position:"relative",fontFamily:"'Nunito',sans-serif",boxShadow:"0 0 40px rgba(0,0,0,.08)"},
+  content:{overflowY:"auto",height:"100vh",paddingBottom:72},
+  nav:{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:"rgba(255,255,255,.97)",backdropFilter:"blur(12px)",borderTop:"1px solid #EBEBEB",display:"flex",height:68,zIndex:100},
+  navBtn:{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,background:"none",border:"none",color:"#BBB",cursor:"pointer",transition:"color .2s",padding:0},
+  addBtn:{display:"flex",alignItems:"center",justifyContent:"center",width:44,height:44,background:"#1A1A2E",borderRadius:14,fontSize:20,boxShadow:"0 4px 14px rgba(26,26,46,.3)"},
+  screen:{paddingTop:16,minHeight:"100vh"},
+  header:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14},
+  heroCard:{margin:"0 16px 4px",background:"linear-gradient(135deg,#1A1A2E 0%,#0F3460 100%)",borderRadius:22,padding:"22px 20px",color:"#fff",boxShadow:"0 8px 32px rgba(26,26,46,.25)"},
+  card:{background:"#fff",borderRadius:16,padding:"14px 14px",boxShadow:"0 2px 8px rgba(0,0,0,.05)"},
+  miniCard:{borderRadius:18,padding:"14px 16px",color:"#fff",boxShadow:"0 4px 16px rgba(0,0,0,.15)"},
+  mesNav:{display:"flex",alignItems:"center",gap:6,background:"#fff",borderRadius:20,padding:"6px 10px",boxShadow:"0 2px 8px rgba(0,0,0,.07)"},
+  mesBtn:{background:"none",border:"none",fontSize:20,color:"#1A1A2E",cursor:"pointer",lineHeight:1,padding:"0 4px"},
+  fijoRow:{display:"flex",alignItems:"center",gap:10,padding:"10px 0"},
+  movRow:{display:"flex",alignItems:"center",gap:10,padding:"10px 0",cursor:"pointer"},
+  fechaTag:{fontSize:11,fontWeight:800,color:"#AAA",textTransform:"uppercase",letterSpacing:.5,marginBottom:4,marginTop:2},
+  input:{width:"100%",border:"1.5px solid #EAE8E3",borderRadius:12,padding:"12px 14px",fontSize:14,marginBottom:12,background:"#FAFAF8",color:"#1A1A2E",fontWeight:600},
+  chip:{padding:"8px 14px",borderRadius:20,border:"1.5px solid #E8E8E8",background:"#fff",fontSize:13,fontWeight:700,color:"#555",cursor:"pointer"},
+  chipOn:{background:"#1A1A2E",color:"#fff",border:"1.5px solid #1A1A2E"},
+  saveBtn:{background:"#1A1A2E",color:"#fff",border:"none",borderRadius:14,padding:14,width:"100%",fontSize:15,fontWeight:800,cursor:"pointer"},
+  addSmBtn:{background:"#1A1A2E",color:"#fff",border:"none",borderRadius:10,padding:"6px 14px",fontSize:12,fontWeight:800,cursor:"pointer"},
+  pagarBtn:{background:"#2D6A4F",color:"#fff",border:"none",borderRadius:10,padding:"7px 13px",fontSize:12,fontWeight:800,cursor:"pointer",whiteSpace:"nowrap"},
+  editBtn:{background:"none",border:"none",fontSize:11,color:"#AAA",cursor:"pointer",fontWeight:700},
+  delBtn:{background:"none",border:"none",fontSize:14,cursor:"pointer",color:"#DDD"},
+  cardTitle:{fontSize:11,fontWeight:800,color:"#888",textTransform:"uppercase",letterSpacing:.5,marginBottom:12},
+};
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
